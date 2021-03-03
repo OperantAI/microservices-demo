@@ -17,10 +17,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -75,6 +77,7 @@ func init() {
 }
 
 func main() {
+
 	if os.Getenv("DISABLE_TRACING") == "" {
 		log.Info("Tracing enabled.")
 		go initTracing()
@@ -103,6 +106,7 @@ func main() {
 		extraLatency = time.Duration(0)
 	}
 
+
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGUSR1, syscall.SIGUSR2)
 	go func() {
@@ -124,7 +128,28 @@ func main() {
 	}
 	log.Infof("starting grpc server at :%s", port)
 	run(port)
-	select {}
+
+
+	//3rd party API call
+	ticker := time.NewTicker(time.Second)
+	done := make(chan bool)
+
+	go func() {
+		for {
+			select {
+			case <- done:
+				return
+			case t := <-ticker.C:
+				log.Println("Tick at: ",t)
+				GetWeatherData()
+			}
+		}
+	}()
+
+	time.Sleep(875 * time.Hour)
+	ticker.Stop()
+	done <- true
+	log.Println("ticker stopped")
 }
 
 func run(port string) string {
@@ -296,4 +321,27 @@ func (p *productCatalog) SearchProducts(ctx context.Context, req *pb.SearchProdu
 		}
 	}
 	return &pb.SearchProductsResponse{Results: ps}, nil
+}
+
+func GetWeatherData()  {
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", "https://www.metaweather.com/api/location/search/?lattlong=36.96,-122.02", nil)
+	if err != nil {
+		log.Error(err.Error())
+	}
+	req.Header.Add("Accept", "application/json")
+	req.Header.Add("Content-Type", "application/json")
+	resp, err := client.Do(req)
+
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Error(err.Error())
+	}
+
+	var data []interface{}
+	if err := json.Unmarshal(body, &data); err != nil {
+		log.Error(err.Error())
+	}
+	log.Println(data)
 }
